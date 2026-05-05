@@ -41,6 +41,15 @@ def coverage_percent(tracker: RouteTracker) -> float:
     return round(covered / len(summaries) * 100, 2)
 
 
+def missing_routes(tracker: RouteTracker) -> List[RouteSummary]:
+    """Return a list of RouteSummary objects for routes that have not been hit.
+
+    Useful for quickly identifying uncovered endpoints without parsing the
+    full report output.
+    """
+    return [s for s in build_summary(tracker) if not s.covered]
+
+
 def text_report(tracker: RouteTracker) -> str:
     """Render a plain-text coverage table."""
     summaries = build_summary(tracker)
