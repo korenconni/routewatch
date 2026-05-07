@@ -4,22 +4,17 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
+from routewatch.alerts import check_coverage_alert
 from routewatch.exporter import save_export
-from routewatch.report import coverage_percent, missing_routes, text_report
+from routewatch.report import text_report
 from routewatch.snapshot import load_snapshot
+from routewatch.tracker import RouteTracker
 
 
-def _load_tracker_from_snapshot(path: str):
-    """Load a RouteTracker from a snapshot file."""
-    try:
-        return load_snapshot(path)
-    except FileNotFoundError:
-        print(f"Error: snapshot file not found: {path}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as exc:  # noqa: BLE001
-        print(f"Error loading snapshot: {exc}", file=sys.stderr)
-        sys.exit(1)
+def _load_tracker_from_snapshot(path: str) -> RouteTracker:
+    return load_snapshot(Path(path))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,75 +22,59 @@ def build_parser() -> argparse.ArgumentParser:
         prog="routewatch",
         description="Lightweight HTTP route coverage tracker.",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
 
-    # --- report sub-command ---
-    report_p = sub.add_parser("report", help="Print a coverage report from a snapshot.")
-    report_p.add_argument("snapshot", help="Path to the snapshot JSON file.")
-    report_p.add_argument(
-        "--missing",
-        action="store_true",
-        help="List only uncovered routes.",
-    )
+    # --- report ---
+    rep = sub.add_parser("report", help="Print a coverage report from a snapshot.")
+    rep.add_argument("snapshot", help="Path to a .json snapshot file.")
 
-    # --- export sub-command ---
-    export_p = sub.add_parser("export", help="Export route data to JSON or CSV.")
-    export_p.add_argument("snapshot", help="Path to the snapshot JSON file.")
-    export_p.add_argument("output", help="Destination file path.")
-    export_p.add_argument(
-        "--format",
-        choices=["json", "csv"],
-        default="json",
-        dest="fmt",
-        help="Output format (default: json).",
-    )
+    # --- export ---
+    exp = sub.add_parser("export", help="Export snapshot data to JSON or CSV.")
+    exp.add_argument("snapshot", help="Path to a .json snapshot file.")
+    exp.add_argument("-f", "--format", choices=["json", "csv"], default="json")
+    exp.add_argument("-o", "--output", required=True, help="Output file path.")
 
-    # --- coverage sub-command ---
-    cov_p = sub.add_parser("coverage", help="Print coverage percentage and exit non-zero if below threshold.")
-    cov_p.add_argument("snapshot", help="Path to the snapshot JSON file.")
-    cov_p.add_argument(
+    # --- alert ---
+    ale = sub.add_parser("alert", help="Exit with code 1 when coverage is below threshold.")
+    ale.add_argument("snapshot", help="Path to a .json snapshot file.")
+    ale.add_argument(
+        "-t",
         "--threshold",
         type=float,
-        default=0.0,
-        metavar="PCT",
-        help="Fail (exit 1) if coverage is below this percentage (0-100).",
+        default=80.0,
+        help="Minimum required coverage percent (default: 80).",
     )
 
     return parser
 
 
-def main(argv: list[str] | None = None) -> None:  # pragma: no cover
+def main(argv: list[str] | None = None) -> int:  # noqa: UP007
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.command is None:
+        parser.print_help()
+        return 0
+
+    tracker = _load_tracker_from_snapshot(args.snapshot)
+
     if args.command == "report":
-        tracker = _load_tracker_from_snapshot(args.snapshot)
-        if args.missing:
-            routes = missing_routes(tracker)
-            if not routes:
-                print("All routes covered.")
-            else:
-                for method, path in routes:
-                    print(f"  {method:7s} {path}")
-        else:
-            print(text_report(tracker))
+        print(text_report(tracker))
+        return 0
 
-    elif args.command == "export":
-        tracker = _load_tracker_from_snapshot(args.snapshot)
-        save_export(tracker, args.output, fmt=args.fmt)
-        print(f"Exported to {args.output} ({args.fmt}).")
+    if args.command == "export":
+        save_export(tracker, Path(args.output), fmt=args.format)
+        print(f"Exported to {args.output}")
+        return 0
 
-    elif args.command == "coverage":
-        tracker = _load_tracker_from_snapshot(args.snapshot)
-        pct = coverage_percent(tracker)
-        print(f"Coverage: {pct:.1f}%")
-        if pct < args.threshold:
-            print(
-                f"FAIL: coverage {pct:.1f}% is below threshold {args.threshold:.1f}%",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+    if args.command == "alert":
+        result = check_coverage_alert(tracker, threshold=args.threshold)
+        print(result.message)
+        return 1 if result.triggered else 0
+
+    parser.print_help()
+    return 0
 
 
-if __name__ == "__main__":  # pragma: no cover
-    main()
+if __name__ == "__main__":
+    sys.exit(main())
