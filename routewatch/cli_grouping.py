@@ -31,15 +31,37 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PCT",
         help="Only show groups below this coverage %% (default: show all).",
     )
+    p.add_argument(
+        "--sort-by",
+        choices=["group", "coverage", "routes", "hits"],
+        default="group",
+        dest="sort_by",
+        help="Sort output by the given column (default: group).",
+    )
     return p
 
 
-def _render(groups, counts, coverage, min_coverage: float) -> str:
+def _sort_key(group: str, groups: dict, counts: dict, coverage: dict, sort_by: str):
+    """Return the sort key for a group row based on the requested column."""
+    if sort_by == "coverage":
+        return coverage.get(group, 0.0)
+    if sort_by == "routes":
+        return len(groups[group])
+    if sort_by == "hits":
+        return counts.get(group, 0)
+    return group  # default: alphabetical by group name
+
+
+def _render(groups, counts, coverage, min_coverage: float, sort_by: str = "group") -> str:
     lines: list[str] = []
     header = f"{'Group':<30} {'Routes':>6} {'Hits':>8} {'Coverage':>10}"
     lines.append(header)
     lines.append("-" * len(header))
-    for group in sorted(groups):
+    sorted_groups = sorted(
+        groups,
+        key=lambda g: _sort_key(g, groups, counts, coverage, sort_by),
+    )
+    for group in sorted_groups:
         cov = coverage.get(group, 0.0)
         if min_coverage > 0 and cov >= min_coverage:
             continue
@@ -63,7 +85,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     counts = group_hit_counts(tracker, groups)
     coverage = group_coverage(tracker, groups)
 
-    print(_render(groups, counts, coverage, args.min_coverage))
+    print(_render(groups, counts, coverage, args.min_coverage, args.sort_by))
     return 0
 
 
