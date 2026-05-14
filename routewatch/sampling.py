@@ -30,6 +30,15 @@ class SamplingConfig:
             return False
         return self._rng.random() < self.rate
 
+    def reset(self, seed: Optional[int] = None) -> None:
+        """Reset the internal RNG, optionally with a new seed.
+
+        Useful in tests or when you want to replay a deterministic sequence
+        from a known starting point without creating a new SamplingConfig.
+        """
+        self.seed = seed
+        self._rng = random.Random(self.seed)
+
 
 def sampled_record(
     tracker: RouteTracker,
