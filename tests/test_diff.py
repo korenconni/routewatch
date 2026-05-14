@@ -67,6 +67,13 @@ def test_has_changes_true_when_routes_added(base_tracker, updated_tracker):
     assert result.has_changes is True
 
 
+def test_unchanged_routes_not_in_hit_changes(base_tracker, updated_tracker):
+    """Routes whose hit counts did not change should not appear in hit_changes."""
+    result = diff_trackers(base_tracker, updated_tracker)
+    # POST /users has 0 hits in both trackers — should not be reported
+    assert "POST /users" not in result.hit_changes
+
+
 def test_diff_report_no_changes():
     t = RouteTracker()
     t.register("GET", "/ping")
