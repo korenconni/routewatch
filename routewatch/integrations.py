@@ -1,82 +1,92 @@
-"""Framework integration helpers for RouteWatch.
-
-Provides convenience functions to attach RouteWatch middleware
-to FastAPI and Flask applications with minimal boilerplate.
-"""
+"""Framework integrations: attach RouteWatch tracking to Flask or FastAPI apps."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from routewatch.tracker import RouteTracker
-from routewatch.middleware import RouteWatchMiddleware, AsyncRouteWatchMiddleware
+from routewatch.sampling import SamplingConfig, sampled_record
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     pass
 
 
-def attach_to_flask(app, tracker: Optional[RouteTracker] = None) -> RouteTracker:
-    """Wrap a Flask application with RouteWatchMiddleware.
+def attach_to_flask(
+    app,
+    tracker: RouteTracker,
+    sampling: SamplingConfig | None = None,
+) -> None:
+    """Register all URL rules from a Flask app and wire up before/after hooks.
 
-    Args:
-        app: A Flask application instance.
-        tracker: An existing RouteTracker to use, or None to create a new one.
-
-    Returns:
-        The RouteTracker being used so callers can inspect it later.
-
-    Example::
-
-        from flask import Flask
-        from routewatch.integrations import attach_to_flask
-
-        flask_app = Flask(__name__)
-        tracker = attach_to_flask(flask_app)
+    Parameters
+    ----------
+    app:
+        A Flask application instance.
+    tracker:
+        The :class:`RouteTracker` that will receive hit recordings.
+    sampling:
+        Optional :class:`SamplingConfig`.  When *None* every hit is recorded.
     """
-    if tracker is None:
-        tracker = RouteTracker()
+    cfg = sampling or SamplingConfig(rate=1.0)
 
-    # Register all routes already defined on the Flask app.
+    # Pre-register all known routes so they appear in reports even before
+    # they receive any traffic.
     for rule in app.url_map.iter_rules():
         for method in rule.methods or []:
             if method in ("HEAD", "OPTIONS"):
                 continue
-            tracker.register(rule.rule, method)
+            tracker.register(method, rule.rule)
 
-    middleware = RouteWatchMiddleware(app.wsgi_app, tracker=tracker)
-    app.wsgi_app = middleware  # type: ignore[assignment]
-    return tracker
+    @app.before_request
+    def _routewatch_before():  # pragma: no cover
+        pass
+
+    @app.after_request
+    def _routewatch_after(response):  # pragma: no cover
+        from flask import request
+
+        if request.url_rule is not None:
+            sampled_record(tracker, request.method, request.url_rule.rule, cfg)
+        return response
 
 
-def attach_to_fastapi(app, tracker: Optional[RouteTracker] = None) -> RouteTracker:
-    """Add AsyncRouteWatchMiddleware to a FastAPI application.
+def attach_to_fastapi(
+    app,
+    tracker: RouteTracker,
+    sampling: SamplingConfig | None = None,
+) -> None:
+    """Register all routes from a FastAPI app and add a middleware hook.
 
-    Args:
-        app: A FastAPI application instance.
-        tracker: An existing RouteTracker to use, or None to create a new one.
-
-    Returns:
-        The RouteTracker being used so callers can inspect it later.
-
-    Example::
-
-        from fastapi import FastAPI
-        from routewatch.integrations import attach_to_fastapi
-
-        fastapi_app = FastAPI()
-        tracker = attach_to_fastapi(fastapi_app)
+    Parameters
+    ----------
+    app:
+        A FastAPI application instance.
+    tracker:
+        The :class:`RouteTracker` that will receive hit recordings.
+    sampling:
+        Optional :class:`SamplingConfig`.  When *None* every hit is recorded.
     """
-    if tracker is None:
-        tracker = RouteTracker()
+    cfg = sampling or SamplingConfig(rate=1.0)
 
-    # Register routes already declared on the FastAPI app.
-    for route in getattr(app, "routes", []):
+    for route in app.routes:
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", None) or []
         if path is None:
             continue
         for method in methods:
-            tracker.register(path, method)
+            tracker.register(method.upper(), path)
 
-    app.add_middleware(AsyncRouteWatchMiddleware, tracker=tracker)
-    return tracker
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request
+
+    class _SampledMiddleware(BaseHTTPMiddleware):  # pragma: no cover
+        async def dispatch(self, request: Request, call_next):
+            response = await call_next(request)
+            scope_route = request.scope.get("route")
+            if scope_route is not None:
+                path = getattr(scope_route, "path", None)
+                if path:
+                    sampled_record(tracker, request.method, path, cfg)
+            return response
+
+    app.add_middleware(_SampledMiddleware)
