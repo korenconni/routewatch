@@ -45,6 +45,23 @@ def _grade_lte(grade: str, threshold: str) -> bool:
     return _GRADE_ORDER.index(grade) >= _GRADE_ORDER.index(threshold)
 
 
+def _print_filtered_routes(scores: list, min_grade: str) -> None:
+    """Print routes whose grade is at or below *min_grade* (i.e. worse or equal).
+
+    Args:
+        scores: List of ``RouteScore`` objects returned by :func:`build_scores`.
+        min_grade: Upper-bound grade threshold (inclusive).  Routes graded
+            *min_grade* or worse are printed.
+    """
+    filtered = [rs for rs in scores if _grade_lte(rs.grade, min_grade)]
+    if not filtered:
+        print(f"No routes with grade {min_grade} or worse.")
+    else:
+        print(f"Routes graded {min_grade} or worse:")
+        for rs in filtered:
+            print(f"  [{rs.grade}] {rs.score:>5.1f}  {rs.hits:>4} hits  {rs.method} {rs.path}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -60,13 +77,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.min_grade:
         scores = build_scores(tracker)
-        filtered = [rs for rs in scores if _grade_lte(rs.grade, args.min_grade)]
-        if not filtered:
-            print(f"No routes with grade {args.min_grade} or worse.")
-        else:
-            print(f"Routes graded {args.min_grade} or worse:")
-            for rs in filtered:
-                print(f"  [{rs.grade}] {rs.score:>5.1f}  {rs.hits:>4} hits  {rs.method} {rs.path}")
+        _print_filtered_routes(scores, args.min_grade)
     else:
         print(scoring_report(tracker))
 
