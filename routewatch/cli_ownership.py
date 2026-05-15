@@ -45,10 +45,26 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Entry point for the routewatch-ownership CLI.
+
+    Args:
+        argv: Optional list of command-line arguments. Defaults to sys.argv.
+
+    Returns:
+        Exit code: 0 on success, 1 on error or when --fail-on-unowned is set
+        and unowned routes are found, 2 on invalid input.
+    """
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    tracker = load_snapshot(args.snapshot)
+    try:
+        tracker = load_snapshot(args.snapshot)
+    except FileNotFoundError:
+        print(f"Error: snapshot file not found: '{args.snapshot}'", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: failed to load snapshot: {exc}", file=sys.stderr)
+        return 2
 
     if args.command == "report":
         print(ownership_report(tracker))
